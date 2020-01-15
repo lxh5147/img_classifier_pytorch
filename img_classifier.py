@@ -17,7 +17,7 @@ def _load_pre_trained_model_and_customize(model_type, num_class=2):
     pre_trained_model = SUPPORTED_MODELS[model_type]['model'](pretrained=True)
     new_classifier = _customized_classifier(SUPPORTED_MODELS[model_type]['in_features'], num_class)
     classifier_attr_name = SUPPORTED_MODELS[model_type]['classifier_attr_name']
-    return _customized_model(pre_trained_model, new_classifier, classifier_attr_name)
+    return _customized_model(pre_trained_model, new_classifier, classifier_attr_name), new_classifier
 
 
 def _customized_model(pre_trained_model, new_classifier, classifier_attr_name='classifier'):
@@ -33,7 +33,7 @@ def _customized_classifier(in_features, num_class):
     return Linear(in_features=in_features, out_features=num_class, bias=True)
 
 
-def _build_transformer():
+def _get_transformer():
     # TODO: configurable transformer
     transform = transforms.Compose([
         transforms.Resize(256),
@@ -53,27 +53,32 @@ class KOLImages(ImageNet):
         super(KOLImages, self).__init__(root, split, download=False, **kwargs)
 
 
-device = torch.device("cuda" if torch.cuda.is_available()
-                      else "cpu")
+def _get_device():
+    return torch.device("cuda" if torch.cuda.is_available()
+                        else "cpu")
+
+def  _get_data_loader(data_root, split, transform, batch_size = 4, shuffle=True):
+    dataset = KOLImages(root=data_root, split=split,
+                        transform=transform)
+    return torch.utils.data.DataLoader(dataset, batch_size=batch_size,
+                                              shuffle=shuffle, num_workers=2)
 
 
 # train
-def _train_model(model, classifier, transform, data_root, device):
+def _train_model(model, classifier, data_loader, device):
     criterion = nn.CrossEntropyLoss()
     # only to update the parameters of the classifier
     optimizer = optim.Adam(classifier.parameters(), lr=0.001)
-    dataset = KOLImages(root=data_root, split='train',
-                        transform=transform)
-    trainloader = torch.utils.data.DataLoader(dataset, batch_size=4,
-                                              shuffle=True, num_workers=2)
     model.to(device)
+    # put into training mode
+    model.train()
 
     epochs = 10
     print_every = 2000  # print every 2000 mini-batches
 
     for epoch in range(epochs):  # loop over the dataset multiple times
         running_loss = 0.0
-        for i, data in enumerate(trainloader, 0):
+        for i, data in enumerate(data_loader, 0):
             # get the inputs; data is a list of [inputs, labels]
             inputs, labels = data
             inputs, labels = inputs.to(device), labels.to(device)
@@ -106,17 +111,13 @@ def _load_model_state(model, model_path):
 
 
 # evaluation
-def _eval_model(model, transform, data_root, device):
-    dataset = KOLImages(root=data_root, split='val',
-                        transform=transform)
-    testloader = torch.utils.data.DataLoader(dataset, batch_size=4,
-                                             shuffle=True, num_workers=2)
+def _test_model(model, data_loader, device):
     model.to(device)
     model.eval()
     correct = 0
     total = 0
     with torch.no_grad():
-        for images, labels in testloader:
+        for images, labels in data_loader:
             inputs, labels = inputs.to(device), labels.to(device)
             outputs = model(images)
             _, predicted = torch.max(outputs.data, 1)
@@ -140,5 +141,22 @@ def _predict(model, transform, img, device):
 
 def main():
     # train the model and save
+    model_type = 'squeezenet1_1'
+    data_root = '.'
+    model_path = 'img_classifier.pth'
+    split = 'train'
+    transform = _get_transformer()
+    batch_size = 10
+    train_data_loader = _get_data_loader(data_root, split, transform, batch_size, shuffle=True)
+    num_class = len(train_data_loader.dataset.classes)
+    # TODO: put classifier as a property of model
+    model , classifier = _load_pre_trained_model_and_customize(model_type, num_class)
+    device = _get_device()
+    _train_model(model, classifier, train_data_loader, device)
+    _save_model_state(model,model_path)
     # test the model
-    pass
+    model_re_loaded, _ = _load_pre_trained_model_and_customize(model_type, num_class)
+    _load_model_state(model_re_loaded, model_path)
+    split = 'val'
+    test_data_loader = _get_data_loader(data_root, split, transform, batch_size, shuffle=False)
+    _test_model(model_re_loaded, test_data_loader, device)
