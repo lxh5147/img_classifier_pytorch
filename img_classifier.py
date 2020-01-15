@@ -57,11 +57,12 @@ def _get_device():
     return torch.device("cuda" if torch.cuda.is_available()
                         else "cpu")
 
-def  _get_data_loader(data_root, split, transform, batch_size = 4, shuffle=True):
+
+def _get_data_loader(data_root, split, transform, batch_size=4, shuffle=True):
     dataset = KOLImages(root=data_root, split=split,
                         transform=transform)
     return torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                                              shuffle=shuffle, num_workers=2)
+                                       shuffle=shuffle, num_workers=2)
 
 
 # train
@@ -149,10 +150,10 @@ def main():
     train_data_loader = _get_data_loader(data_root, 'train', transform, batch_size, shuffle=True)
     num_class = len(train_data_loader.dataset.classes)
     # TODO: put classifier as a property of model
-    model , classifier = _load_pre_trained_model_and_customize(model_type, num_class)
+    model, classifier = _load_pre_trained_model_and_customize(model_type, num_class)
     device = _get_device()
     _train_model(model, classifier, train_data_loader, device)
-    _save_model_state(model,model_path)
+    _save_model_state(model, model_path)
     # test the model
     model_re_loaded, _ = _load_pre_trained_model_and_customize(model_type, num_class)
     _load_model_state(model_re_loaded, model_path)
