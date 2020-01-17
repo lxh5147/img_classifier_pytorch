@@ -1,12 +1,13 @@
+import os
+from collections import namedtuple
+
 import torch
-import torchvision
+import torch.optim as optim
+from torch import nn
 from torch.nn import Linear
 from torchvision import models
 from torchvision import transforms
-from PIL import Image
-from torch import nn
-from torchvision.datasets import ImageNet
-import torch.optim as optim
+from torchvision.datasets.folder import ImageFolder
 
 SUPPORTED_MODELS = {
     'squeezenet1_1': {'model': models.squeezenet1_1, 'classifier_attr_name': 'classifier', 'in_features': 512}}
@@ -25,7 +26,7 @@ def _customized_model(pre_trained_model, new_classifier, classifier_attr_name):
     for param in pre_trained_model.parameters():
         param.requires_grad = False
     # replace the classifier
-    setattr(pre_trained_model, new_classifier, classifier_attr_name)
+    setattr(pre_trained_model, classifier_attr_name, new_classifier, )
     # add the 'classifier' attribute if not existed
     if not hasattr(pre_trained_model, 'classifier'):
         setattr(pre_trained_model, 'classifier', new_classifier)
@@ -50,34 +51,26 @@ def _get_transform():
     return transform
 
 
-# image dataset organized in imagenet style
-class KOLImages(ImageNet):
-    # the folder root/train/1/11.png
-    def __init__(self, root, split='train', **kwargs):
-        super(KOLImages, self).__init__(root, split, download=False, **kwargs)
-
-
 def _get_device():
     return torch.device("cuda" if torch.cuda.is_available()
                         else "cpu")
 
 
 def _get_data_loader(data_root, split, transform, batch_size, shuffle):
-    dataset = KOLImages(root=data_root, split=split,
-                        transform=transform)
+    # root/split/class_1/img1.png
+    dataset = ImageFolder(os.path.join(data_root, split),
+                          transform=transform)
     return torch.utils.data.DataLoader(dataset, batch_size=batch_size,
                                        shuffle=shuffle, num_workers=2)
 
-
-from collections import namedtuple
 
 _config = {
     'data_root': './data',
     'model_type': 'squeezenet1_1',
     'model_path': 'img_classifier.pth',
     'train_shuffle_data': True,
-    'train_epochs': 10,
-    'train_print_every': 2000,
+    'train_epochs': 3,
+    'train_print_every': 1,
     'train_lr': 0.001,
     'batch_size': 2,
 }
@@ -95,7 +88,7 @@ def _train_model(model, data_loader, device, config):
     model.train()
 
     epochs = config.train_epochs
-    print_every = config.print_every  # print every 2000 mini-batches
+    print_every = config.train_print_every  # print every 2000 mini-batches
 
     for epoch in range(epochs):  # loop over the dataset multiple times
         running_loss = 0.0
@@ -192,17 +185,19 @@ def main(config):
     num_class = len(train_data_loader.dataset.classes)
     model = _load_pre_trained_model_and_customize(config.model_type, num_class)
     device = _get_device()
-    _train_model(model, train_data_loader, device)
+    _train_model(model, train_data_loader, device,config)
     _save_model_state(model, config.model_path)
     # test the model
     model_re_loaded, _ = _load_pre_trained_model_and_customize(config.model_type, num_class)
     _load_model_state(model_re_loaded, config.model_path)
-    test_data_loader = _get_data_loader(config.data_root, 'val', transform, config.batch_size, shuffle=False)
+    test_data_loader = _get_data_loader(config.data_root, 'unk', transform, config.batch_size, shuffle=False)
     _test_model(model_re_loaded, test_data_loader, device)
     # prediction
-    predict_data_loader = _get_data_loader(config.data_root, '', transform, config.batch_size, shuffle=False)
+    predict_data_loader = _get_data_loader(config.data_root, 'pred', transform, config.batch_size,
+                                           shuffle=False)
     predictions = _predict_batch(model_re_loaded, predict_data_loader, device)
-    print('predictions: ' + str( predictions))
+    print('predictions: ' + str(predictions))
 
-if __name__ == 'main':
-    pass
+
+if __name__ == "__main__":
+    main(CONFIG)

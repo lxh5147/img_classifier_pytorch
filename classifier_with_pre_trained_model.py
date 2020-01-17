@@ -1,8 +1,7 @@
 import torch
-
+from PIL import Image
 from torchvision import models
 from torchvision import transforms
-from PIL import Image
 
 # import matplotlib.pyplot as plt
 
