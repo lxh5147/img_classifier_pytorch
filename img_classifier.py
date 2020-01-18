@@ -142,8 +142,8 @@ def _test_model(model, data_loader, device):
     total = 0
     with torch.no_grad():
         for images, labels in data_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-            outputs = model(images)
+            inputs, labels = images.to(device), labels.to(device)
+            outputs = model(inputs)
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
@@ -160,10 +160,10 @@ def _predict_batch(model, data_loader, device):
 
     with torch.no_grad():
         for images, _ in data_loader:
-            inputs = inputs.to(device)
-            outputs = model(images)
+            inputs = images.to(device)
+            outputs = model(inputs)
             _, predicted = torch.max(outputs.data, 1)
-            for pred in predicted.numpy():
+            for pred in predicted.cpu().numpy():
                 predictions.append(pred)
     return predictions
 
@@ -198,9 +198,9 @@ def main(config):
     _train_model(model, train_data_loader, device, config)
     _save_model_state(model, config.model_path)
     # test the model
-    model_re_loaded, _ = _load_pre_trained_model_and_customize(config.model_type, num_class)
+    model_re_loaded = _load_pre_trained_model_and_customize(config.model_type, num_class)
     _load_model_state(model_re_loaded, config.model_path)
-    test_data_loader = _get_data_loader(config.data_root, 'unk', transform, config.batch_size, shuffle=False)
+    test_data_loader = _get_data_loader(config.data_root, 'val', transform, config.batch_size, shuffle=False)
     _test_model(model_re_loaded, test_data_loader, device)
     # prediction
     predict_data_loader = _get_data_loader(config.data_root, 'pred', transform, config.batch_size,
