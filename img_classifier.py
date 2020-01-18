@@ -4,19 +4,34 @@ from collections import namedtuple
 import torch
 import torch.optim as optim
 from torch import nn
-from torch.nn import Linear
 from torchvision import models
 from torchvision import transforms
 from torchvision.datasets.folder import ImageFolder
 
+
+def _customized_classifier_squeezenet1_1(num_class):
+    return nn.Sequential(nn.Dropout(p=0.5, inplace=False),
+                         nn.ReLU(),
+                         nn.Conv2d(512, num_class, kernel_size=(1, 1), stride=(1, 1)),
+                         nn.ReLU(inplace=True),
+                         nn.AdaptiveAvgPool2d(output_size=(1, 1)))
+
+
 SUPPORTED_MODELS = {
-    'squeezenet1_1': {'model': models.squeezenet1_1, 'classifier_attr_name': 'classifier', 'in_features': 512}}
+    'squeezenet1_1': {'model': models.squeezenet1_1,
+                      'classifier_attr_name': 'classifier',
+                      'classifier_builder': _customized_classifier_squeezenet1_1,
+                      }}
+
+
+def _customized_classifier(builder, num_class):
+    return builder(num_class)
 
 
 # re-use a pre-trained model as feature extractor, and update the output classifier
 def _load_pre_trained_model_and_customize(model_type, num_class):
     pre_trained_model = SUPPORTED_MODELS[model_type]['model'](pretrained=True)
-    new_classifier = _customized_classifier(SUPPORTED_MODELS[model_type]['in_features'], num_class)
+    new_classifier = _customized_classifier(SUPPORTED_MODELS[model_type]['classifier_builder'], num_class)
     classifier_attr_name = SUPPORTED_MODELS[model_type]['classifier_attr_name']
     return _customized_model(pre_trained_model, new_classifier, classifier_attr_name)
 
@@ -31,11 +46,6 @@ def _customized_model(pre_trained_model, new_classifier, classifier_attr_name):
     if not hasattr(pre_trained_model, 'classifier'):
         setattr(pre_trained_model, 'classifier', new_classifier)
     return pre_trained_model
-
-
-def _customized_classifier(in_features, num_class):
-    # TODO: try other types of classifiers
-    return Linear(in_features=in_features, out_features=num_class, bias=True)
 
 
 def _get_transform():
@@ -185,7 +195,7 @@ def main(config):
     num_class = len(train_data_loader.dataset.classes)
     model = _load_pre_trained_model_and_customize(config.model_type, num_class)
     device = _get_device()
-    _train_model(model, train_data_loader, device,config)
+    _train_model(model, train_data_loader, device, config)
     _save_model_state(model, config.model_path)
     # test the model
     model_re_loaded, _ = _load_pre_trained_model_and_customize(config.model_type, num_class)
