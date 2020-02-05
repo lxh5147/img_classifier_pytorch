@@ -1,3 +1,4 @@
+import json
 import os
 from collections import namedtuple
 
@@ -7,6 +8,11 @@ from torch import nn
 from torchvision import models
 from torchvision import transforms
 from torchvision.datasets.folder import ImageFolder
+
+
+def _fix_random_seed():
+    # https://pytorch.org/docs/stable/notes/randomness.html
+    torch.manual_seed(0)
 
 
 def _customized_classifier_squeezenet1_1(num_class):
@@ -74,10 +80,15 @@ def _get_data_loader(data_root, split, transform, batch_size, shuffle):
                                        shuffle=shuffle, num_workers=2)
 
 
+def _from_id_to_label(ids, classes):
+    return [classes[id] for id in ids]
+
+
 _config = {
     'data_root': './data',
     'model_type': 'squeezenet1_1',
     'model_path': 'img_classifier.pth',
+    'class_file_path': 'img_classes.txt',
     'train_shuffle_data': True,
     'train_epochs': 3,
     'train_print_every': 1,
@@ -134,6 +145,32 @@ def _load_model_state(model, model_path):
     model.load_state_dict(pickle_module)
 
 
+# save labels
+def _save_class_labels(classes, file_path):
+    with open(file_path, 'w') as f:
+        json.dump(classes, f)
+
+
+def _load_class_labels(file_path):
+    with  open(file_path) as f:
+        classes = json.load(f)
+    return classes
+
+
+def _save(model, model_path, classes, class_file_path):
+    _save_model_state(model, model_path)
+    _save_class_labels(classes, class_file_path)
+
+
+def _load(model, model_path, class_file_path):
+    _load_model_state(model, model_path)
+    # a list of class labels
+    classes_loaded = _load_class_labels(class_file_path)
+    return classes_loaded
+
+
+# load_labels
+
 # evaluation
 def _test_model(model, data_loader, device):
     model.to(device)
@@ -149,7 +186,7 @@ def _test_model(model, data_loader, device):
             correct += (predicted == labels).sum().item()
 
     print('Accuracy of the network on the %d test images: %d %%' % (
-            total, 100 * correct / total))
+        total, 100 * correct / total))
 
 
 # prediction
@@ -175,6 +212,7 @@ def _predict(model, transform, imgs, device):
     output = model(input)
     _, index = torch.max(output, 1)
     index = torch.squeeze(index, 0)
+    # the index of the predicted label
     return index.item()
 
 
@@ -189,24 +227,29 @@ def _predict_single(model, transform, img, device):
 
 
 def main(config):
+    # ensure repeatable results
+    _fix_random_seed()
     transform = _get_transform()
     train_data_loader = _get_data_loader(config.data_root, 'train', transform, config.batch_size,
                                          shuffle=config.train_shuffle_data)
-    num_class = len(train_data_loader.dataset.classes)
+    classes = train_data_loader.dataset.classes
+    num_class = len(classes)
     model = _load_pre_trained_model_and_customize(config.model_type, num_class)
     device = _get_device()
     _train_model(model, train_data_loader, device, config)
-    _save_model_state(model, config.model_path)
-    # test the model
+    _save(model, config.model_path, classes, config.class_file_path)
+    # test the model, with reloadel and class labels
     model_re_loaded = _load_pre_trained_model_and_customize(config.model_type, num_class)
-    _load_model_state(model_re_loaded, config.model_path)
+    classes_re_loaded = _load(model_re_loaded, config.model_path, config.class_file_path)
     test_data_loader = _get_data_loader(config.data_root, 'val', transform, config.batch_size, shuffle=False)
     _test_model(model_re_loaded, test_data_loader, device)
     # prediction
     predict_data_loader = _get_data_loader(config.data_root, 'pred', transform, config.batch_size,
                                            shuffle=False)
     predictions = _predict_batch(model_re_loaded, predict_data_loader, device)
-    print('predictions: ' + str(predictions))
+    # translate the index into labels
+    labels = _from_id_to_label(predictions, classes_re_loaded)
+    print('predictions: ' + str(labels))
 
 
 if __name__ == "__main__":
