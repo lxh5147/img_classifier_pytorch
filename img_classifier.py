@@ -81,7 +81,8 @@ def _get_data_loader(data_root, split, transform, batch_size, shuffle):
 
 
 def _from_id_to_label(ids, classes):
-    return [classes[id] for id in ids]
+    # ids: each prediction has k ids
+    return [[classes[id] for id in id_list] for id_list in ids]
 
 
 _config = {
@@ -94,6 +95,8 @@ _config = {
     'train_print_every': 1,
     'train_lr': 0.001,
     'batch_size': 2,
+    # how many labels to predict, default 1
+    'prediction_top_k': 1
 }
 
 CONFIG = namedtuple("CONFIG", _config.keys())(*_config.values())
@@ -169,8 +172,6 @@ def _load(model, model_path, class_file_path):
     return classes_loaded
 
 
-# load_labels
-
 # evaluation
 def _test_model(model, data_loader, device):
     model.to(device)
@@ -190,38 +191,36 @@ def _test_model(model, data_loader, device):
 
 
 # prediction
-def _predict_batch(model, data_loader, device):
+def _predict_batch(model, data_loader, device, top_k=1):
     model.to(device)
     model.eval()
     predictions = []
-
     with torch.no_grad():
         for images, _ in data_loader:
             inputs = images.to(device)
             outputs = model(inputs)
-            _, predicted = torch.max(outputs.data, 1)
-            for pred in predicted.cpu().numpy():
+            _, index = torch.topk(outputs, top_k)
+            for pred in index.cpu().numpy():
                 predictions.append(pred)
     return predictions
 
 
-def _predict(model, transform, imgs, device):
+def _predict(model, transform, imgs, device, top_k=1):
     # the model is
     imgs_t = transform(imgs)
     input = imgs_t.to(device)
     output = model(input)
-    _, index = torch.max(output, 1)
-    index = torch.squeeze(index, 0)
-    # the index of the predicted label
-    return index.item()
+    _, index = torch.topk(output, top_k)
+    # the index of the top k predicted label
+    return index.cpu().numpy()
 
 
-def _predict_single(model, transform, img, device):
+def _predict_single(model, transform, img, device, top_k=1):
     img_t = transform(img)
     batch_t = torch.unsqueeze(img_t, 0)
     batch_t = batch_t.to(device)
-    out = model(batch_t)
-    _, index = torch.max(out, 1)
+    output = model(batch_t)
+    _, index = torch.topk(output, top_k)
     index = torch.squeeze(index, 0)
     return index.item()
 
@@ -244,9 +243,11 @@ def main(config):
     test_data_loader = _get_data_loader(config.data_root, 'val', transform, config.batch_size, shuffle=False)
     _test_model(model_re_loaded, test_data_loader, device)
     # prediction
+    top_k = CONFIG.prediction_top_k
     predict_data_loader = _get_data_loader(config.data_root, 'pred', transform, config.batch_size,
                                            shuffle=False)
-    predictions = _predict_batch(model_re_loaded, predict_data_loader, device)
+    # for each image, predict top k labels
+    predictions = _predict_batch(model_re_loaded, predict_data_loader, device, top_k)
     # translate the index into labels
     labels = _from_id_to_label(predictions, classes_re_loaded)
     print('predictions: ' + str(labels))
