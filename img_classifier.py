@@ -96,7 +96,8 @@ _config = {
     'train_lr': 0.001,
     'batch_size': 2,
     # how many labels to predict, default 1
-    'prediction_top_k': 1
+    'prediction_top_k': 1,
+    'prediction_prob_threshold': .2,
 }
 
 CONFIG = namedtuple("CONFIG", _config.keys())(*_config.values())
@@ -197,32 +198,34 @@ def _predict_batch(model, data_loader, device, top_k=1):
     predictions = []
     with torch.no_grad():
         for images, _ in data_loader:
-            inputs = images.to(device)
-            outputs = model(inputs)
-            _, index = torch.topk(outputs, top_k)
+            input = images.to(device)
+            output = model(input)
+            output = torch.nn.functional.softmax(output, dim=-1)
+            prob, index = torch.topk(output, top_k)
             for pred in index.cpu().numpy():
                 predictions.append(pred)
-    return predictions
+    return predictions, prob.cpu().numpy()
 
 
 def _predict(model, transform, imgs, device, top_k=1):
-    # the model is
+    # imgs: a list of a img
     imgs_t = transform(imgs)
     input = imgs_t.to(device)
     output = model(input)
-    _, index = torch.topk(output, top_k)
-    # the index of the top k predicted label
-    return index.cpu().numpy()
+    output = torch.nn.functional.softmax(output, dim=-1)
+    prob, index = torch.topk(output, top_k)
+    # the index and prob of the top k predicted label
+    return index.cpu().numpy(), prob.cpu().numpy()
 
 
-def _predict_single(model, transform, img, device, top_k=1):
-    img_t = transform(img)
-    batch_t = torch.unsqueeze(img_t, 0)
-    batch_t = batch_t.to(device)
-    output = model(batch_t)
-    _, index = torch.topk(output, top_k)
-    index = torch.squeeze(index, 0)
-    return index.item()
+# remove predictions according to prob threshold
+def _remove_predictions_with_low_prob(predictions, probs, threshold):
+    # may return no prediction (an empty list of prediction) if all predictions have a low prediction probability
+    filtered = [list(filter(lambda i: i[1] >= threshold, zip(id_list, prob_list))) for id_list, prob_list in
+                zip(predictions, probs)]
+    filtered_predictions = [[i[0] for i in filtered_prediction] for filtered_prediction in filtered]
+    filtered_probs = [[i[1] for i in filtered_prediction] for filtered_prediction in filtered]
+    return filtered_predictions, filtered_probs
 
 
 def main(config):
@@ -244,13 +247,15 @@ def main(config):
     _test_model(model_re_loaded, test_data_loader, device)
     # prediction
     top_k = CONFIG.prediction_top_k
+    prob_threshold = CONFIG.prediction_prob_threshold
     predict_data_loader = _get_data_loader(config.data_root, 'pred', transform, config.batch_size,
                                            shuffle=False)
-    # for each image, predict top k labels
-    predictions = _predict_batch(model_re_loaded, predict_data_loader, device, top_k)
+    # for each image, predict top k labels, and filter
+    predictions, probs = _predict_batch(model_re_loaded, predict_data_loader, device, top_k)
+    predictions, probs = _remove_predictions_with_low_prob(predictions, probs, prob_threshold)
     # translate the index into labels
     labels = _from_id_to_label(predictions, classes_re_loaded)
-    print('predictions: ' + str(labels))
+    print('predictions: ' + str(labels) + ' with probs: ' + str(probs))
 
 
 if __name__ == "__main__":
